@@ -106,24 +106,17 @@ then
         number_of_items=`aws s3api list-objects --bucket $DEPLOY_BUCKET --prefix $cleanup_prefix$suffix/ --output=json --query="length(Contents[])"` || number_of_items=0
         echo "$number_of_items items in $DEPLOY_BUCKET/$cleanup_prefix$suffix/..."
         
-        aws s3api list-objects --bucket $DEPLOY_BUCKET --prefix $cleanup_prefix$suffix/ --output=text | \
-        while read -r line
+        aws s3api list-objects --bucket $DEPLOY_BUCKET --prefix $cleanup_prefix$suffix/ --output=json --query "Contents[].[LastModified, Key]" | \
+        jq -c '.[]' | while read -r line
         do
-             # Adjust for FULL_OBJECT field
-            if echo "$line" | grep -q "FULL_OBJECT"; then
-                last_modified=`echo "$line" | awk -F'\t' '{print $5}'`
-                filename=`echo "$line" | awk -F'\t' '{print $4}'`
-            else
-                last_modified=`echo "$line" | awk -F'\t' '{print $4}'`
-                filename=`echo "$line" | awk -F'\t' '{print $3}'`
-            fi
-
-            if [[ -z $last_modified ]]; then
+            last_modified=$(echo "$line" | jq -r '.[0]')
+            filename=$(echo "$line" | jq -r '.[1]')
+            if [[ -z $last_modified ]]
+            then
                 continue
             fi
             item_count=$((item_count+1))
-            last_modified_ts=`date -d"$last_modified" +%s`
-            filename=`echo "$line" | awk -F'\t' '{print $3}'`
+            last_modified_ts=$(date -d"$last_modified" +%s)
             echo "File # $item_count: $filename. Last modified: $last_modified_ts"
             if [[ $last_modified_ts -lt $older_than_ts ]]
             then
