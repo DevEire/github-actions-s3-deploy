@@ -109,9 +109,16 @@ then
         aws s3api list-objects --bucket $DEPLOY_BUCKET --prefix $cleanup_prefix$suffix/ --output=text | \
         while read -r line
         do
-            last_modified=`echo "$line" | awk -F'\t' '{print $4}'`
-            if [[ -z $last_modified ]]
-            then
+             # Adjust for FULL_OBJECT field
+            if echo "$line" | grep -q "FULL_OBJECT"; then
+                last_modified=`echo "$line" | awk -F'\t' '{print $5}'`
+                filename=`echo "$line" | awk -F'\t' '{print $4}'`
+            else
+                last_modified=`echo "$line" | awk -F'\t' '{print $4}'`
+                filename=`echo "$line" | awk -F'\t' '{print $3}'`
+            fi
+
+            if [[ -z $last_modified ]]; then
                 continue
             fi
             item_count=$((item_count+1))
