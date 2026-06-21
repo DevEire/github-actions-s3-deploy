@@ -7,10 +7,10 @@ set -eu
 # DEPLOY_BUCKET_PREFIX = a directory prefix within your bucket
 # DEPLOY_BRANCHES = regex of branches to deploy; leave blank for all
 # DEPLOY_EXTENSIONS = whitespace-separated file exentions to deploy; leave blank for "jar war zip"
-# AWS_ACCESS_KEY_ID = AWS access ID
-# AWS_SECRET_ACCESS_KEY = AWS secret
+# AWS_ACCESS_KEY_ID = AWS access ID (not needed under OIDC; role creds are used automatically)
+# AWS_SECRET_ACCESS_KEY = AWS secret (not needed under OIDC)
 # AWS_DEFAULT_REGION = AWS region
-# AWS_SESSION_TOKEN = optional AWS session token for temp keys
+# AWS_SESSION_TOKEN = optional AWS session token for temp keys (set automatically under OIDC)
 # PURGE_OLDER_THAN_DAYS = Files in the .../deploy and .../pull-request prefixes in S3 older than this number of days will be deleted; leave blank for 90, 0 to disable.
 
 if [[ -z "${DEPLOY_BUCKET}" ]]
@@ -72,21 +72,26 @@ if ! [ -x "$(command -v aws)" ]; then
     export PATH=~/.local/bin:$PATH
 fi
 
-aws s3api list-objects --bucket $DEPLOY_BUCKET --prefix $target --output=text | \
-while read -r line
+# Delete any existing artifacts at the target path before uploading the new build.
+# Select Key explicitly via --query so the listing returns only object keys.
+# (The previous version parsed --output=text with awk '{print $3}', which could
+#  pick up the ETag field -- a quoted value like "cb92...-29" -- and feed that
+#  malformed key to "aws s3 rm", causing AccessDenied / phantom deletes.)
+aws s3api list-objects --bucket "$DEPLOY_BUCKET" --prefix "$target" \
+  --query 'Contents[].Key' --output text | tr '\t' '\n' | \
+while read -r filename
 do
-    filename=`echo "$line" | awk -F'\t' '{print $3}'`
-    if [[ $filename != "" && $filename != "None" ]]    
+    if [[ -n "$filename" && "$filename" != "None" ]]
     then
         echo "Deleting existing artifact s3://$DEPLOY_BUCKET/$filename."
-        aws s3 rm s3://$DEPLOY_BUCKET/$filename
+        aws s3 rm "s3://$DEPLOY_BUCKET/$filename"
     fi
 done
 
 for file in $files
 do
     echo "Deploying $file to s3://$DEPLOY_BUCKET/$target"
-    aws s3 cp $file s3://$DEPLOY_BUCKET/$target
+    aws s3 cp "$file" "s3://$DEPLOY_BUCKET/$target"
 done
 
 echo "PURGE_OLDER_THAN_DAYS ${PURGE_OLDER_THAN_DAYS}"
@@ -105,7 +110,7 @@ then
         echo "Getting number of items in $DEPLOY_BUCKET with prefix $cleanup_prefix$suffix/..."
         number_of_items=`aws s3api list-objects --bucket $DEPLOY_BUCKET --prefix $cleanup_prefix$suffix/ --output=json --query="length(Contents[])"` || number_of_items=0
         echo "$number_of_items items in $DEPLOY_BUCKET/$cleanup_prefix$suffix/..."
-        
+
         aws s3api list-objects --bucket $DEPLOY_BUCKET --prefix $cleanup_prefix$suffix/ --output=json --query "Contents[].[LastModified, Key]" | \
         jq -c '.[]' | while read -r line
         do
